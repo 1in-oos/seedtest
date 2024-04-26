@@ -17,6 +17,7 @@ def request_seed(bus, arb_id, data, is_extend_id):
     seed_request = can.Message(arbitration_id=arb_id, data=data, is_extended_id = is_extend_id)
     # 发送请求种子的CAN消息
     bus.send(seed_request)
+    #time.sleep(0.1)
     print("sendrequest")     
     # 接收种子响应
     response = []
@@ -33,6 +34,7 @@ def request_seed(bus, arb_id, data, is_extend_id):
             #response_data = " ".join("{:02X}".format(byte) for byte in response[0].data)
             #print("Response data:", response_data)
             break
+    
     #print("结束第一个循环")        
     if response:
         # 解析响应数据
@@ -56,10 +58,10 @@ def request_seed(bus, arb_id, data, is_extend_id):
         # 判断响应数据的第一字节前四位是否为1
         elif response[0].data[0] >> 4 == 0b0001:
             # 发送流控制帧
-            flow_control_frame = can.Message(arbitration_id=arb_id, data=[0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], is_extended_id = is_extend_id)
+            flow_control_frame = can.Message(arbitration_id=arb_id, data=[0x30, 0x00, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00], is_extended_id = is_extend_id)
             bus.send(flow_control_frame)
-
-            print("发送流控制")
+            #time.sleep(0.1)
+            #print("发送流控制")
             while True:
                 msg = bus.recv()
                 if msg is None:
