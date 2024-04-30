@@ -57,7 +57,7 @@ def check_randomness(data):
     print(f"Overall randomness: {'Random' if avg_p_value > 0.05 else 'Not random'}")
 
 if __name__ == "__main__":
-    file_path = "logs/seed-bcm修改前4.25.log"
+    file_path = "logs/seed-bcm4.28.log"
     data = read_seed_log(file_path)
     #check_randomness(data)  # 调用函数检查数据随机性
     count_row_occurrences(data)     # 调用函数并传入数据列表
