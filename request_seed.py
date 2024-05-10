@@ -98,7 +98,7 @@ def send_key(bus, arb_id, data,expected_response_ids,data_length,is_extend_id):
         print("no Response for key")
 
 
-def request_seed(bus, arb_id, data, is_extend_id):
+def request_seed(bus, arb_id, data, is_extend_id,choice):
     # 构造请求种子的CAN消息
     seed_request = can.Message(arbitration_id=arb_id, data=data, is_extended_id = is_extend_id)
     # 发送请求种子的CAN消息
@@ -139,7 +139,8 @@ def request_seed(bus, arb_id, data, is_extend_id):
                     f.write(" ".join("{:02X}".format(byte) for byte in seed) + "\n")  # 将seed内容写入日志文件
                     #f.write("\n")  # 每次写入后加入一个回车符以进行分隔
                 print("seed_length:", data_length-2,"byte","\n", "Seed:", " ".join("{:02X}".format(byte) for byte in seed))
-                send_key(bus, arb_id, data,expected_response_ids,data_length,is_extend_id)     
+                if choice:
+                    send_key(bus, arb_id, data,expected_response_ids,data_length,is_extend_id)     
             else:
                 print("Request failed. Response data:", response_data)                
         # 判断响应数据的第一字节前四位是否为1
@@ -171,7 +172,8 @@ def request_seed(bus, arb_id, data, is_extend_id):
                     f.write(" ".join("{:02X}".format(byte) for byte in seed) + "\n")  # 将seed内容写入日志文件
                     #f.write("\n")  # 每次写入后加入一个回车符以进行分隔
                 print("seed_length:", data_length-2,"byte","\n", "Seed:", " ".join("{:02X}".format(byte) for byte in seed))
-                send_key(bus, arb_id, data,expected_response_ids,data_length,is_extend_id)  
+                if choice:
+                    send_key(bus, arb_id, data,expected_response_ids,data_length,is_extend_id)  
             else:
                 print("Request failed. Response data:", response_data)
         else:
@@ -191,6 +193,12 @@ if data_input:
     data = [int(byte, 16) for byte in data_input.split()]
 else:
     data = [0x02, 0x27, 0x01]
+choice = input("请输入 0 或 1 来判断是否进行种子爆破(0: 不进行,1: 进行, leave empty to use default 0):").strip()
+if choice:
+    choice = int(choice)
+else:
+    choice = 0
+
 expected_response_ids =  (arb_id & 0xFFFF0000) | ((arb_id & 0x0000FF00) >> 8) | ((arb_id & 0x000000FF) << 8)
 is_extend_id = arb_id > 0x7FF
 # 将数据字节补齐到8个字节
@@ -214,8 +222,8 @@ try:
         print("Requesting seed", i + 1)
         extended_session(arb_id, is_extend_id)
         time.sleep(0.1)
-        request_seed(bus, arb_id, data, is_extend_id)
-        time.sleep(0.1)  # 间隔一段时间再发送下一个请求，以避免发送速率过快
+        request_seed(bus, arb_id, data, is_extend_id,choice)
+        time.sleep(0.1)  # 间隔一段时间再发送下一个请求，以避免发送速率过快  
 
 except KeyboardInterrupt:
     bus.shutdown()
