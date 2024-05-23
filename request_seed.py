@@ -46,7 +46,7 @@ def send_data(bus, arbitration_id, data_length, data, is_extend_id):
             
 
 def switch_NRC(data):
-    argument == data[3]
+    argument = data[3]
     switcher = {
         11: pirnt("NRC==11,  服务不支持"),
         1: "One",
@@ -79,7 +79,7 @@ def send_key(bus, arb_id, data,expected_response_ids,data_length,is_extend_id):
         if msg is None:
             break 
 
-        if msg.arbitration_id in expected_response_ids and (msg.data[1]==0x67 or msg.data[1]==0x7F):
+        if msg.arbitration_id in expected_response_ids and (msg.data[1]==0x67 or msg.data[1]==0x7F or msg.data[2]==0x27):
             response.append(msg)
             response_data = " ".join("{:02X}".format(byte) for byte in response[0].data)
             print("Response data:", response_data)
@@ -90,7 +90,7 @@ def send_key(bus, arb_id, data,expected_response_ids,data_length,is_extend_id):
         # 判断响应数据的第一字节前四位是否为0
         if response[0].data[1] == 0x7F:
             print("Request failed. Response data:", response_data)
-            switch_NRC(response[0])
+            #switch_NRC(response[0])
             return
         elif response[0].data[1] == 0x67:
             print("破解成功")
@@ -127,7 +127,7 @@ def request_seed(bus, arb_id, data, is_extend_id,choice):
         if response[0].data[0] >> 4 == 0b0000:
             if response[0].data[1] == 0x7F:
                 print("Request failed. Response data:", response_data)
-                switch_NRC(response[0])
+                #switch_NRC(response[0])
                 return
             elif response[0].data[1] == expected_next_seq:
                 # 计算种子长度
