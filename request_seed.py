@@ -156,6 +156,7 @@ def request_seed(bus, arb_id, data, is_extend_id,choice):
                 #with open(log_file, "a") as f:
                     #f.write(" ".join("{:02X}".format(byte) for byte in seed) + "\n")  # 将seed内容写入日志文件
                     #f.write("\n")  # 每次写入后加入一个回车符以进行分隔
+                print(seed)
                 Save_log(seed)
                 print("seed_length:", data_length-2,"byte","\n", "Seed:", " ".join("{:02X}".format(byte) for byte in seed))
                 if choice:
