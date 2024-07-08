@@ -3,10 +3,29 @@ import time
 import signal
 import sys
 import random
+import os
 
 def signal_handler(sig, frame):
     print("\nCtrl+C detected. Exiting...")
     sys.exit(0)
+
+def Save_log(seed):
+    log_file = "seed.log"  # 日志文件名
+    
+    # 确定当前的计数
+    if os.path.exists(log_file):
+        with open(log_file, "r") as f:
+            lines = f.readlines()
+            count = len(lines) + 1
+    else:
+        count = 1
+    
+    # 写入新的日志条目
+    with open(log_file, "a") as f:
+        #f.write(f"{count:04d} " + " ".join("{:02X}".format(byte) for byte in seed) + "\n")
+        f.write(count.to_bytes(4, byteorder='big'))  # 写入4字节计数器
+        f.write(bytes(seed))  # 写入seed的二进制流
+
 
 def send_message(bus, arbitration_id, data, is_extend_id):
     # 创建 CAN 消息对象
@@ -134,10 +153,11 @@ def request_seed(bus, arb_id, data, is_extend_id,choice):
                 data_length = (response[0].data[0] & 0x0F) 
                 # 从响应消息中提取指定长度的数据字节，每行从第二个字节开始，跳过每行的第一个字节
                 seed = [byte for msg in response for byte in msg.data][3:data_length+1]
-                log_file = "seed.log"  # 日志文件名
-                with open(log_file, "a") as f:
-                    f.write(" ".join("{:02X}".format(byte) for byte in seed) + "\n")  # 将seed内容写入日志文件
+                #log_file = "seed.log"  # 日志文件名
+                #with open(log_file, "a") as f:
+                    #f.write(" ".join("{:02X}".format(byte) for byte in seed) + "\n")  # 将seed内容写入日志文件
                     #f.write("\n")  # 每次写入后加入一个回车符以进行分隔
+                Save_log(seed)
                 print("seed_length:", data_length-2,"byte","\n", "Seed:", " ".join("{:02X}".format(byte) for byte in seed))
                 if choice:
                     send_key(bus, arb_id, data,expected_response_ids,data_length,is_extend_id)     
@@ -167,10 +187,7 @@ def request_seed(bus, arb_id, data, is_extend_id,choice):
                 data_length = (response[0].data[0] & 0x0F) << 8 | response[0].data[1]
                 # 从响应消息中提取指定长度的数据字节，每行从第二个字节开始，跳过每行的第一个字节
                 seed = [byte for msg in response for i, byte in enumerate(msg.data) if i % 8 != 0][3:data_length+1]
-                log_file = "seed.log"  # 日志文件名
-                with open(log_file, "a") as f:
-                    f.write(" ".join("{:02X}".format(byte) for byte in seed) + "\n")  # 将seed内容写入日志文件
-                    #f.write("\n")  # 每次写入后加入一个回车符以进行分隔
+                Save_log(seed)
                 print("seed_length:", data_length-2,"byte","\n", "Seed:", " ".join("{:02X}".format(byte) for byte in seed))
                 if choice:
                     send_key(bus, arb_id, data,expected_response_ids,data_length,is_extend_id)  
