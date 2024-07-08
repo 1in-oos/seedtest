@@ -21,11 +21,11 @@ def Save_log(seed):
         count = 1
     
     # 写入新的日志条目
-    with open(log_file, "a") as f:
+    #with open(log_file, "a") as f:
         #f.write(f"{count:04d} " + " ".join("{:02X}".format(byte) for byte in seed) + "\n")
+    with open(log_file, "ab") as f:
         f.write(count.to_bytes(4, byteorder='big'))  # 写入4字节计数器
         f.write(bytes(seed))  # 写入seed的二进制流
-
 
 def send_message(bus, arbitration_id, data, is_extend_id):
     # 创建 CAN 消息对象
