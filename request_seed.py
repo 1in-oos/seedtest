@@ -11,6 +11,8 @@ def signal_handler(sig, frame):
 
 def Save_log(seed):
     log_file = "seed.log"  # 日志文件名
+    bytes_seed = bytes(seed)
+    hex_seed = ' '.join(f'{b:02X}' for b in seed)  # 转换为十六进制并用空格分隔
 
     # 确定当前的计数
     if os.path.exists(log_file):
@@ -19,12 +21,18 @@ def Save_log(seed):
             count = len(lines) + 1
     else:
         count = 1
+    
+    # 写入二进制文件
+    with open(log_file, "ab") as f_bin:
+        f_bin.write(bytes_seed)
+    
+    # 写入十六进制文件并添加换行符
+    with open(log_file + "_hex", "a") as f_hex:
+        f_hex.write(hex_seed + '\n')
 
-    # 将计数和seed写入日志文件
-    with open(log_file, "ab") as f:
-        f.write(count.to_bytes(4, byteorder='big'))  # 写入4字节计数器
-        f.write(bytes(seed))  # 写入seed的二进制流
-
+    # 在二进制文件后添加换行符
+    with open(log_file, "ab") as f_newline:
+        f_newline.write(b'\n')
 
 def send_message(bus, arbitration_id, data, is_extend_id):
     # 创建 CAN 消息对象
@@ -156,9 +164,8 @@ def request_seed(bus, arb_id, data, is_extend_id,choice):
                 #with open(log_file, "a") as f:
                     #f.write(" ".join("{:02X}".format(byte) for byte in seed) + "\n")  # 将seed内容写入日志文件
                     #f.write("\n")  # 每次写入后加入一个回车符以进行分隔
-                print(seed)
+                print(" ".join(format(decimal, '02X') for decimal in seed))
                 Save_log(seed)
-                print("seed_length:", data_length-2,"byte","\n", "Seed:", " ".join("{:02X}".format(byte) for byte in seed))
                 if choice:
                     send_key(bus, arb_id, data,expected_response_ids,data_length,is_extend_id)     
             else:
@@ -188,7 +195,8 @@ def request_seed(bus, arb_id, data, is_extend_id,choice):
                 # 从响应消息中提取指定长度的数据字节，每行从第二个字节开始，跳过每行的第一个字节
                 seed = [byte for msg in response for i, byte in enumerate(msg.data) if i % 8 != 0][3:data_length+1]
                 Save_log(seed)
-                print("seed_length:", data_length-2,"byte","\n", "Seed:", " ".join("{:02X}".format(byte) for byte in seed))
+                print(" ".join(format(decimal, '02X') for decimal in seed))
+
                 if choice:
                     send_key(bus, arb_id, data,expected_response_ids,data_length,is_extend_id)  
             else:
