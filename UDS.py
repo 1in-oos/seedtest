@@ -343,6 +343,7 @@ def main():
         print(f"Using arbitration ID: {hex(arb_id)}")
         print(f"Security Access Level: {hex(level)}")
         print(f"Seed choice: {seed_choice}")
+        
         try:
             # 请求2000次种子
             for i in range(1):
@@ -350,7 +351,8 @@ def main():
                 extended_session(bus,arb_id, is_extend_id)
                 time.sleep(0.02)
                 request_seed(bus, arb_id,expected_response_ids, level, is_extend_id,seed_choice)
-                time.sleep(0.02)  # 间隔一段时间再发送下一个请求，以避免发送速率过快  
+                time.sleep(0.02)  # 间隔一段时间再发送下一个请求，以避免发送速率过快
+
         except KeyboardInterrupt:
             bus.shutdown()
             print("\nCtrl+C detected. Exiting...")
