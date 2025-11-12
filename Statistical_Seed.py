@@ -1,63 +1,68 @@
 from scipy.stats import chisquare
 
 def read_seed_log(file_path):
+    """读取日志文件并转换为二维十六进制数组"""
     with open(file_path, 'r') as file:
-        lines = file.readlines()    #读取文件有多少行
-        data = [line.strip().split()[:len(line.strip().split()) // 2] for line in lines]
-        #data = [line.strip().split() for line in lines]  #删除头和尾的空格  按照空格分割成单词列表
-        #print(data)
-        return data
+        lines = [line.strip() for line in file if line.strip()]
+        data = [line.split() for line in lines]
+    #print(data)
+    return data
+
 
 def count_row_occurrences(data):
-    # 创建一个空字典来存储每行数据出现的次数
+    """统计每一行是否有重复"""
+    # 创建字典统计每行出现次数
     row_counts = {}
-
-    # 遍历数据列表中的每一行
     for row in data:
-        # 将当前行转换为元组，以便在字典中使用
         row_tuple = tuple(row)
-
-        # 更新字典中当前行的出现次数
         row_counts[row_tuple] = row_counts.get(row_tuple, 0) + 1
 
-    # 输出每行数据的出现次数
-    #for row, count in row_counts.items():
-        #print(f"Row {row}: Occurrences: {count}/{len(data)}")
-    print("每个值的重复次数")
-    print(" ".join(f"{count}" for index, count in row_counts.items()))
-    print(f"出现不重复总个数： {len(row_counts)}/{len(data)}")
+    print("重复的数值及出现次数：")
+    duplicates = {row: count for row, count in row_counts.items() if count > 1}
+    
+    if duplicates:
+        for row, count in duplicates.items():
+            print(f"{' '.join(row)} : 出现 {count} 次")
+    else:
+        print("没有重复的行。")
+
+    print(f"唯一行数量：{len(row_counts)} / 总行数：{len(data)}")
+
 
 def check_randomness(data):
-    num_groups = len(data)      #每行
-    num_entries = len(data[0])  #每个字节
+    """用卡方检验检测每个字节分布是否接近均匀"""
+    num_groups = len(data)      # 行数
+    num_entries = len(data[0])  # 每行字节数
     total_p_value = 0
 
     for i in range(num_entries):
-        observed_counts = [int(entry[i], 16) for entry in data]     
+        # 取第 i 个字节列
+        observed_values = [int(entry[i], 16) for entry in data]
+        # 计算每个字节值出现次数（0~255）
+        observed_counts = [observed_values.count(val) for val in range(256)]
+        expected_counts = [len(data) / 256] * 256
 
-        observed_counts = [observed_counts.count(val) for val in range(256)]    #计算每个实际次数
-        #print(observed_counts)
-        expected_counts = [len(data) / 256] *256   #计算每个数值期望的次数 
-        #print(expected_counts)
-        chi2, p_value = chisquare(observed_counts, f_exp=expected_counts)   #计算卡方值和P值
-
-        # 将小于 0.0000000001 的 p-value 设为 0
-        if p_value < 0.0000000001:
+        chi2, p_value = chisquare(observed_counts, f_exp=expected_counts)
+        if p_value < 1e-10:
             p_value = 0
-
         total_p_value += p_value
 
-        print(f"Comparison of Byte {i + 1} across {num_groups} groups:")
-        print(f"Chi-squared value: {chi2}")
-        print(f"P-value: {p_value}")
-        print(f"Is random: {'Yes' if p_value > 0.05 else 'No'}")
+        print(f"\nByte {i + 1} 分布检验:")
+        print(f"Chi-squared 值: {chi2:.4f}")
+        print(f"P-value: {p_value:.6g}")
+        print(f"是否随机: {'是' if p_value > 0.05 else '否'}")
 
     avg_p_value = total_p_value / num_entries
-    print(f"Average P-value across bytes: {avg_p_value}")
-    print(f"Overall randomness: {'Random' if avg_p_value > 0.05 else 'Not random'}")
+    print(f"\n平均 P-value: {avg_p_value:.6g}")
+    print(f"总体结论: {'随机' if avg_p_value > 0.05 else '非随机'}")
+
 
 if __name__ == "__main__":
-    file_path = "logs/FT-seed.log"
+    file_path = "logs/seed-zhiji.log_hex"
     data = read_seed_log(file_path)
-    #check_randomness(data)  # 调用函数检查数据随机性
-    count_row_occurrences(data)     # 调用函数并传入数据列表
+
+    # 查看重复行
+    count_row_occurrences(data)
+
+    # 检查随机性
+    #check_randomness(data)

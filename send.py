@@ -28,7 +28,7 @@ def receive_response(bus):
                     break
 def main():
     # 创建 CAN 总线接口
-    bus = can.interface.Bus(channel='can0', bustype='socketcan')
+    bus = can.interface.Bus(channel='can0', interface='socketcan')
     
     # 循环监听 CAN 总线并处理消息
     try:

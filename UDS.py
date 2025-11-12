@@ -3,25 +3,14 @@ import time
 import signal
 import sys
 import random
-import os
 
 def signal_handler(sig, frame):
     print("\nCtrl+C detected. Exiting...")
     sys.exit(0)
 def Save_log(seed):
     log_file = "seed.log"  # 日志文件名
-    bytes_seed = bytes(seed)
     hex_seed = ' '.join(f'{b:02X}' for b in seed)  # 转换为十六进制并用空格分隔
 
-    # 确定当前的计数
-    if os.path.exists(log_file):
-        with open(log_file, "rb") as f:
-            lines = f.readlines()
-            count = len(lines) + 1
-    else:
-        count = 1 
-
-    # 写入十六进制文件并添加换行符
     with open(log_file + "_hex", "a") as f_hex:
         f_hex.write(hex_seed + '\n')
 
@@ -89,6 +78,9 @@ def receive_iso_tp_message(bus, arb_id, expected_response_ids):
             data = first_frame.data[2:8]  # 获取首帧数据
             # 发送流控帧
             flow_control_data = bytearray([0x30, 0x00, 0x0A])  # 构造流控帧数据
+
+            while len(flow_control_data) < 8:
+                flow_control_data.append(0x00)  # 以 0x00 填充，或根据协议需要使用其他值	
             flow_control_message = can.Message(arbitration_id=arb_id, data=flow_control_data, is_extended_id=False)
             bus.send(flow_control_message)  # 发送流控帧
 
@@ -133,6 +125,8 @@ def switch_NRC(argument):
 def extended_session(bus,arb_id, expected_response_ids,  is_extend_id):
     # 发送进入扩展会话的CAN消息
     send_iso_tp_message(bus, arb_id, expected_response_ids, [0x10, 0x03], is_extend_id)
+
+    response = receive_iso_tp_message(bus, arb_id, expected_response_ids)
 def process_seed(bus, arb_id, data, level, expected_response_ids,is_extend_id,seed_data):
     # 按位取反
     inverted_data = [~b & 0xFF for b in seed_data]
@@ -393,6 +387,240 @@ def read_memory(bus, start_address):
     # 转换为 ASCII
     ascii_string = ''.join(chr(b) for b in all_data if 32 <= b <= 126)
     print(f"Address: {hex(start_address)}, ASCII: {ascii_string}")
+    
+def read_data_by_identifier(bus, arb_id, expected_response_ids, did, is_extend_id):
+    """
+    发送 ReadDataByIdentifier (0x22) 请求并接收响应
+    """
+    # 构造请求数据: SID (0x22) + DID (2字节)
+    request_data = [0x22, (did >> 8) & 0xFF, did & 0xFF]
+    
+    # 发送请求
+    send_iso_tp_message(bus, arb_id, expected_response_ids, request_data, is_extend_id)
+    
+    # 接收响应
+    response = receive_iso_tp_message(bus, arb_id, expected_response_ids)
+
+    if not response:
+        return None
+    
+    # 调试信息
+    print(f"DID 0x{did:04X} Response:", " ".join(format(b, '02X') for b in response))
+    
+    # 解析响应
+    if len(response) >= 3 and response[0] == 0x62:  # 0x62 是 0x22 的肯定响应SID
+        # 检查DID是否匹配
+        response_did = (response[1] << 8) | response[2]
+        if response_did == did:
+            # 提取数据
+            data = response[3:]
+            return list(data)  # 确保返回的是list类型
+        else:
+            print(f"DID不匹配: 请求0x{did:04X}, 响应0x{response_did:04X}")
+            return list(response)  # 返回完整响应用于调试
+    elif len(response) >= 3 and response[0] == 0x7F and response[1] == 0x22:
+        # 负响应
+        nrc = response[2]
+        return nrc  # 返回负响应代码
+    
+    # 其他情况，返回完整响应用于调试
+    print(f"未知响应格式: {' '.join(format(b, '02X') for b in response)}")
+    return list(response)
+
+def write_data_by_identifier(bus, arb_id, expected_response_ids, did, data, is_extend_id):
+    """
+    发送 WriteDataByIdentifier (0x2E) 请求并接收响应
+    """
+    # 构造请求数据: SID (0x2E) + DID (2字节) + 数据
+    request_data = [0x2E, (did >> 8) & 0xFF, did & 0xFF] + data
+    
+    # 发送请求
+    send_iso_tp_message(bus, arb_id, expected_response_ids, request_data, is_extend_id)
+    
+    # 接收响应
+    response = receive_iso_tp_message(bus, arb_id, expected_response_ids)
+    
+    if not response:
+        return None
+        
+    # 解析响应
+    if len(response) >= 3 and response[0] == 0x6E:  # 0x6E 是 0x2E 的肯定响应SID
+        # 检查DID是否匹配
+        response_did = (response[1] << 8) | response[2]
+        if response_did == did:
+            return True  # 写入成功
+    elif len(response) >= 3 and response[0] == 0x7F and response[1] == 0x2E:
+        # 负响应
+        nrc = response[2]
+        return nrc  # 返回负响应代码
+    
+    return None
+
+def scan_all_dids_mode0(bus, arb_id, expected_response_ids, is_extend_id, start_did=0x0000, end_did=0xFFFF):
+    """
+    模式0: 遍历扫描所有DID并显示十六进制数据和ASCII值
+    """
+    print(f"开始扫描 DID 范围: 0x{start_did:04X} 到 0x{end_did:04X}")
+    print("="*80)
+    print(f"{'DID':<8} {'HEX数据':<30} {'ASCII表示':<20} {'状态'}")
+    print("-"*80)
+    
+    found_dids = []
+    
+    for did in range(start_did, end_did + 1):
+        try:
+            result = read_data_by_identifier(bus, arb_id, expected_response_ids, did, is_extend_id)
+            
+            if result is None:
+                # 无响应
+                pass
+            elif isinstance(result, list):
+                # 成功读取到数据
+                hex_data = ' '.join(f"{b:02X}" for b in result)
+                # 转换为可打印ASCII字符，不可打印字符替换为'.'
+                ascii_data = ''.join(chr(b) if 32 <= b <= 126 else '.' for b in result)
+                print(f"0x{did:04X}   {hex_data:<30} {ascii_data:<20} 成功")
+                found_dids.append((did, result, "success"))
+            elif isinstance(result, int):
+                # 负响应
+                print(f"0x{did:04X}   {'NRC: 0x{:02X}'.format(result):<30} {'':<20} ", end="")
+                switch_NRC(result)
+                found_dids.append((did, None, f"NRC: 0x{result:02X}"))
+            
+            # 每100个DID显示一次进度
+            if did % 100 == 0 and did != 0:
+                print(f"进度: {did}/{end_did} (0x{did:04X}/0x{end_did:04X})")
+                
+            # 短暂延迟避免总线过载
+            time.sleep(0.01)
+            
+        except Exception as e:
+            print(f"❌ DID 0x{did:04X}: 错误 - {e}")
+            found_dids.append((did, None, f"Error: {e}"))
+            continue
+    
+    # 输出总结
+    print("="*80)
+    success_count = len([d for d in found_dids if d[2] == "success"])
+    nrc_count = len([d for d in found_dids if d[2].startswith("NRC")])
+    error_count = len([d for d in found_dids if d[2].startswith("Error")])
+    
+    print(f"扫描完成，共发现 {len(found_dids)} 个响应DID:")
+    print(f"  - 成功读取: {success_count}")
+    print(f"  - 负响应: {nrc_count}")
+    print(f"  - 错误: {error_count}")
+    
+    # 保存结果到文件
+    with open("did_scan_results.txt", "w", encoding="utf-8") as f:
+        f.write(f"DID扫描结果\n")
+        f.write(f"{'DID':<8} {'HEX数据':<30} {'ASCII表示':<20} {'状态'}\n")
+        f.write("-"*80 + "\n")
+        
+        for did, data, status in found_dids:
+            if data is not None:
+                hex_data = ' '.join(f"{b:02X}" for b in data)
+                ascii_data = ''.join(chr(b) if 32 <= b <= 126 else '.' for b in data)
+                f.write(f"0x{did:04X}   {hex_data:<30} {ascii_data:<20} {status}\n")
+            else:
+                f.write(f"0x{did:04X}   {'':<30} {'':<20} {status}\n")
+    
+    print(f"\n详细结果已保存到 did_scan_results.txt")
+    return found_dids
+
+def test_write_did_mode1(bus, arb_id, expected_response_ids, is_extend_id, start_did=0x0000, end_did=0xFFFF):
+    """
+    模式1: 对DID范围发送2E服务(写入请求)并返回NRC
+    """
+    print(f"开始测试 DID 写入服务，范围: 0x{start_did:04X} 到 0x{end_did:04X}")
+    print("="*60)
+    print(f"{'DID':<8} {'响应'}")
+    print("-"*60)
+    
+    results = []
+    
+    # 使用固定测试数据
+    test_data = [0x01, 0x02, 0x03, 0x04]  # 示例测试数据
+    
+    for did in range(start_did, end_did + 1):
+        try:
+            result = write_data_by_identifier(bus, arb_id, expected_response_ids, did, test_data, is_extend_id)
+            
+            if result is None:
+                # 无响应
+                print(f"0x{did:04X}   无响应")
+                results.append((did, "无响应"))
+            elif result is True:
+                # 写入成功
+                print(f"0x{did:04X}   写入成功")
+                results.append((did, "写入成功"))
+            elif isinstance(result, int):
+                # 负响应
+                print(f"0x{did:04X}   ", end="")
+                switch_NRC(result)
+                results.append((did, f"NRC: 0x{result:02X}"))
+            
+            # 每50个DID显示一次进度
+            if did % 50 == 0 and did != 0:
+                print(f"进度: {did}/{end_did} (0x{did:04X}/0x{end_did:04X})")
+                
+            # 短暂延迟避免总线过载
+            time.sleep(0.02)
+            
+        except Exception as e:
+            print(f"❌ DID 0x{did:04X}: 错误 - {e}")
+            results.append((did, f"错误: {e}"))
+            continue
+    
+    # 保存结果到文件
+    with open("write_did_test_results.txt", "w", encoding="utf-8") as f:
+        f.write(f"DID写入测试结果\n")
+        f.write(f"{'DID':<8} {'响应'}\n")
+        f.write("-"*60 + "\n")
+        
+        for did, response in results:
+            f.write(f"0x{did:04X}   {response}\n")
+    
+    print("="*60)
+    print(f"测试完成，结果已保存到 write_did_test_results.txt")
+    return results
+
+def get_did_scan_range():
+    """
+    获取用户输入的DID扫描范围
+    """
+    print("请输入要扫描的DID范围:")
+    start_input = input("起始 DID (hex, 默认 0000): ").strip()
+    end_input = input("结束 DID (hex, 默认 FFFF): ").strip()
+    
+    try:
+        start_did = int(start_input, 16) if start_input else 0x0000
+        end_did = int(end_input, 16) if end_input else 0xFFFF
+        
+        # 确保范围有效
+        if start_did > end_did:
+            print("起始DID不能大于结束DID，使用默认范围")
+            return 0x0000, 0xFFFF
+            
+        return start_did, end_did
+    except ValueError:
+        print("输入格式错误，使用默认范围 0x0000-0xFFFF")
+        return 0x0000, 0xFFFF
+
+def get_scan_mode():
+    """
+    获取扫描模式
+    """
+    mode_input = input("请选择模式 (0: 读取DID并显示数据, 1: 发送写入DID请求并返回NRC, 默认 0): ").strip()
+    try:
+        mode = int(mode_input) if mode_input else 0
+        if mode not in [0, 1]:
+            print("模式必须是0或1，使用默认模式0")
+            return 0
+        return mode
+    except ValueError:
+        print("输入格式错误，使用默认模式0")
+        return 0
+    
 def print_log_header():
     print("   .               .    ")
     print(" .´  ·  .     .  ·  `.  UDS TEST")
@@ -400,7 +628,6 @@ def print_log_header():
     print(" `.  ·  ` /¯\\ ´  ·  .´  by 1in-oos")
     print("   `     /¯¯¯\\     ´   https://github.com/1in-oos/seedtest.git")
     print("="*50)
-
 def get_arbitration_id():
     id_input = input("Enter CAN message ID (hex, leave empty to use default 7E0): ").strip()
     if id_input:
@@ -525,6 +752,28 @@ def main():
             print("\nCtrl+C detected. Exiting...")
         finally:
             # 关闭CAN总线接口
+            bus.shutdown()
+    elif SID == 0x22:
+        
+        print("执行 ReadDataByIdentifier (0x22) DID 扫描")
+        mode = get_scan_mode()
+        extended_session( bus, arb_id, expected_response_ids, is_extend_id)
+        time.sleep(0.01)
+        start_did, end_did = get_did_scan_range()
+        
+        try:
+            if mode == 0:
+                # 模式0: 遍历DID并显示十六进制数据和ASCII值
+                print("模式0: 遍历DID并显示数据")
+                scan_all_dids_mode0(bus, arb_id, expected_response_ids, is_extend_id, start_did, end_did)
+            elif mode == 1:
+                # 模式1: 发送2E服务并返回NRC
+                print("模式1: 发送写入DID请求并返回NRC")
+                test_write_did_mode1(bus, arb_id, expected_response_ids, is_extend_id, start_did, end_did)
+                
+        except KeyboardInterrupt:
+            print("\n用户中断操作...")
+        finally:
             bus.shutdown()
 
 if __name__ == "__main__":

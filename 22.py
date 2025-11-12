@@ -4,7 +4,7 @@ import time
 # 定义请求和响应的参数
 SERVICE_ID = 0x22  # 诊断服务 22
 ADDRESS = 0x7DF  # 广播地址，通常用于请求
-ECU_ID = 0x7E8  # 目标 ECU 地址
+ECU_ID = 0x7af  # 目标 ECU 地址
 
 def create_request():
     """创建诊断服务 22 的请求帧"""
