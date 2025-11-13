@@ -1,10 +1,165 @@
+# udstest.py - 修改版，添加诊断数据发送和ID输入功能
 import can
 import time
 import signal
 import sys
 import random
 from typing import Optional, List, Tuple
-#补充
+# 在文件顶部添加导入
+import threading
+
+# 在全局变量区域添加
+keep_session_alive = False
+alive_check_thread = None
+
+# 添加会话保持函数
+def session_keep_alive(bus, arb_id, expected_response_ids, is_extend_id):
+    """会话保持线程函数"""
+    global keep_session_alive
+    while keep_session_alive:
+        try:
+            # 发送Tester Present (3E 00)
+            send_iso_tp_message(bus, arb_id, expected_response_ids, [0x3E, 0x00], is_extend_id)
+            # 等待响应但不处理
+            receive_iso_tp_message(bus, arb_id, expected_response_ids)
+            # 每5秒发送一次
+            time.sleep(5)
+        except Exception as e:
+            if keep_session_alive:
+                print(f"⚠️  会话保持出错: {e}")
+            break
+
+def start_session_keep_alive(bus, arb_id, expected_response_ids, is_extend_id):
+    """启动会话保持"""
+    global keep_session_alive, alive_check_thread
+    if not keep_session_alive:
+        keep_session_alive = True
+        alive_check_thread = threading.Thread(target=session_keep_alive, args=(bus, arb_id, expected_response_ids, is_extend_id), daemon=True)
+        alive_check_thread.start()
+        print("✅ 会话保持已启动")
+
+def stop_session_keep_alive():
+    """停止会话保持"""
+    global keep_session_alive, alive_check_thread
+    if keep_session_alive:
+        keep_session_alive = False
+        if alive_check_thread:
+            alive_check_thread.join(timeout=1)
+        print("⏹️  会话保持已停止")
+
+# 在 get_arbitration_id 函数后添加
+def get_target_address():
+    """获取目标地址（用于诊断激活）"""
+    target_input = input("🔧 输入目标逻辑地址 (hex, 如: 0101): ").strip()
+    if target_input:
+        try:
+            return int(target_input, 16)
+        except ValueError:
+            print("❌ 地址格式错误，使用默认地址")
+    return None
+
+# 修改 interactive_mode 函数，添加新命令
+def interactive_mode(bus, arb_id, expected_response_ids, is_extend_id):
+    """交互式诊断模式"""
+    print("\n🎮 进入交互式诊断模式")
+    print("支持的命令:")
+    print("  send        - 发送自定义诊断数据")
+    print("  session X   - 切换到诊断会话 (如: session 03)")
+    print("  seed LEVEL  - 请求安全访问种子 (如: seed 01)")
+    print("  reset       - ECU硬重置")
+    print("  keepalive   - 启动/停止会话保持")
+    print("  activate    - 发送诊断激活请求")
+    print("  help        - 显示帮助信息")
+    print("  quit/exit   - 退出程序")
+    print("-" * 50)
+    
+    while True:
+        try:
+            cmd = input("\n🔧 UDS> ").strip().lower()
+            
+            if cmd in ['quit', 'exit', 'q']:
+                print("👋 退出程序")
+                stop_session_keep_alive()  # 退出前停止会话保持
+                break
+                
+            if cmd == 'help':
+                print("\n📖 帮助信息:")
+                print("  send        - 发送自定义诊断数据")
+                print("  session X   - 切换诊断会话 (X: 01/02/03)")
+                print("  seed LEVEL  - 请求安全种子 (LEVEL: 01/03/05等)")
+                print("  reset       - ECU硬重置")
+                print("  keepalive   - 启动/停止会话保持")
+                print("  activate    - 发送诊断激活请求")
+                print("  help        - 显示此帮助")
+                print("  quit/exit   - 退出程序")
+                continue
+                
+            if cmd == 'send':
+                send_custom_diagnostic_data(bus, arb_id, expected_response_ids, is_extend_id)
+                continue
+                
+            if cmd == 'keepalive':
+                global keep_session_alive
+                if keep_session_alive:
+                    stop_session_keep_alive()
+                else:
+                    start_session_keep_alive(bus, arb_id, expected_response_ids, is_extend_id)
+                continue
+                
+            if cmd == 'activate':
+                target_addr = get_target_address()
+                if target_addr:
+                    # 发送诊断激活请求 (DOIP 协议格式示例)
+                    activation_req = [0x02, 0xFD, 0x00, 0x05, 0x00, 0x00, 0x00, 0x07,
+                                    (arb_id >> 8) & 0xFF, arb_id & 0xFF,
+                                    (target_addr >> 8) & 0xFF, target_addr & 0xFF,
+                                    0x00, 0x00, 0x00, 0x00]
+                    print(f"📤 发送诊断激活请求: {' '.join(f'{b:02X}' for b in activation_req)}")
+                else:
+                    print("❌ 未提供目标地址")
+                continue
+                
+            if cmd.startswith('session '):
+                try:
+                    session_type = int(cmd.split()[1], 16)
+                    print(f"🔄 切换到诊断会话 0x{session_type:02X}")
+                    send_iso_tp_message(bus, arb_id, expected_response_ids, [0x10, session_type], is_extend_id)
+                    response = receive_iso_tp_message(bus, arb_id, expected_response_ids)
+                    if response:
+                        print(f"📥 响应: {' '.join(f'{b:02X}' for b in response)}")
+                except Exception as e:
+                    print(f"❌ 命令格式错误: {e}")
+                continue
+                
+            if cmd.startswith('seed '):
+                try:
+                    level = int(cmd.split()[1], 16)
+                    print(f"🔑 请求安全访问种子 (级别: 0x{level:02X})")
+                    request_seed(bus, arb_id, expected_response_ids, level, is_extend_id, 1)
+                except Exception as e:
+                    print(f"❌ 命令格式错误: {e}")
+                continue
+                
+            if cmd == 'reset':
+                print("🔄 执行ECU硬重置")
+                send_iso_tp_message(bus, arb_id, expected_response_ids, [0x11, 0x01], is_extend_id)
+                response = receive_iso_tp_message(bus, arb_id, expected_response_ids)
+                if response:
+                    print(f"📥 响应: {' '.join(f'{b:02X}' for b in response)}")
+                continue
+                
+            if cmd:
+                print("❌ 未知命令，输入 'help' 查看帮助")
+                
+        except KeyboardInterrupt:
+            print("\n👋 收到中断信号，退出...")
+            stop_session_keep_alive()  # 退出前停止会话保持
+            break
+        except EOFError:
+            print("\n👋 输入结束，退出...")
+            stop_session_keep_alive()  # 退出前停止会话保持
+            break
+# 补充
 def signal_handler(sig, frame):
     print("\nCtrl+C detected. Exiting...")
     sys.exit(0)
@@ -604,6 +759,21 @@ def get_arbitration_id():
     else:
         return 0x7E0
 
+def get_response_ids(arb_id):
+    """获取响应ID列表"""
+    print("🔧 输入响应ID (多个ID用空格分隔，留空使用默认规则):")
+    response_input = input("响应ID (hex): ").strip()
+    
+    if response_input:
+        try:
+            response_ids = {int(id_str, 16) for id_str in response_input.split()}
+            return response_ids
+        except ValueError:
+            print("❌ 输入格式错误，使用默认规则")
+    
+    # 默认规则
+    return {arb_id + 8, arb_id - 8, (arb_id & 0xFFFF0000) | ((arb_id & 0x0000FF00) >> 8) | ((arb_id & 0x000000FF) << 8)}
+
 def UDS_SID():
     SID = input("🔧 输入服务标识符 (hex, 留空使用默认 27): ").strip()
     if SID:
@@ -644,114 +814,80 @@ def get_can_mode():
         print("❌ 输入格式错误，使用默认模式0 (Classic CAN)")
         return False
 
-def interactive_mode(bus, arb_id, expected_response_ids, is_extend_id):
-    """交互式诊断模式"""
-    print("\n🎮 进入交互式诊断模式")
-    print("输入十六进制命令进行诊断 (如: 10 03, 22 F1 90)")
-    print("支持的命令:")
-    print("  help        - 显示帮助信息")
-    print("  quit/exit   - 退出程序")
-    print("  session X   - 切换到诊断会话 (如: session 03)")
-    print("  seed LEVEL  - 请求安全访问种子 (如: seed 01)")
-    print("  reset       - ECU硬重置")
+def send_custom_diagnostic_data(bus, arb_id, expected_response_ids, is_extend_id):
+    """发送自定义诊断数据"""
+    print("\n🎮 发送自定义诊断数据")
+    print("输入十六进制数据 (如: 10 03, 22 F1 90)")
+    print("输入 'q' 或 'quit' 返回主菜单")
     print("-" * 50)
     
     while True:
         try:
-            cmd = input("\n🔧 UDS> ").strip().lower()
+            cmd = input("\n🔧 诊断数据> ").strip().lower()
             
-            if cmd in ['quit', 'exit', 'q']:
-                print("👋 退出程序")
+            if cmd in ['q', 'quit', 'exit']:
+                print("👋 返回主菜单")
                 break
                 
-            if cmd == 'help':
-                print("\n📖 帮助信息:")
-                print("  直接输入十六进制命令: 10 03, 22 F1 90, 11 01")
-                print("  session X   - 切换诊断会话 (X: 01/02/03)")
-                print("  seed LEVEL  - 请求安全种子 (LEVEL: 01/03/05等)")
-                print("  reset       - ECU硬重置")
-                print("  quit/exit   - 退出")
+            if not cmd:
                 continue
                 
-            if cmd.startswith('session '):
-                try:
-                    session_type = int(cmd.split()[1], 16)
-                    print(f"🔄 切换到诊断会话 0x{session_type:02X}")
-                    send_iso_tp_message(bus, arb_id, expected_response_ids, [0x10, session_type], is_extend_id)
-                    response = receive_iso_tp_message(bus, arb_id, expected_response_ids)
-                    if response:
-                        print(f"📥 响应: {' '.join(f'{b:02X}' for b in response)}")
-                except Exception as e:
-                    print(f"❌ 命令格式错误: {e}")
-                continue
+            # 解析十六进制数据
+            try:
+                hex_bytes = [int(b, 16) for b in cmd.split()]
+                print(f"📤 发送: {' '.join(f'{b:02X}' for b in hex_bytes)}")
                 
-            if cmd.startswith('seed '):
-                try:
-                    level = int(cmd.split()[1], 16)
-                    print(f"🔑 请求安全访问种子 (级别: 0x{level:02X})")
-                    request_seed(bus, arb_id, expected_response_ids, level, is_extend_id, 1)
-                except Exception as e:
-                    print(f"❌ 命令格式错误: {e}")
-                continue
+                # 发送数据
+                send_iso_tp_message(bus, arb_id, expected_response_ids, hex_bytes, is_extend_id)
                 
-            if cmd == 'reset':
-                print("🔄 执行ECU硬重置")
-                send_iso_tp_message(bus, arb_id, expected_response_ids, [0x11, 0x01], is_extend_id)
+                # 接收响应
                 response = receive_iso_tp_message(bus, arb_id, expected_response_ids)
                 if response:
                     print(f"📥 响应: {' '.join(f'{b:02X}' for b in response)}")
-                continue
+                    
+                    # 特殊响应处理
+                    if len(response) >= 2 and response[0] == 0x7F:
+                        if len(response) >= 3:
+                            switch_NRC(response[2])
+                else:
+                    print("❌ 无响应")
+                    
+            except ValueError:
+                print("❌ 无效的十六进制格式")
+            except Exception as e:
+                print(f"❌ 发送数据失败: {e}")
                 
-            # 处理普通十六进制命令
-            if cmd:
-                try:
-                    # 解析十六进制命令
-                    hex_bytes = [int(b, 16) for b in cmd.split()]
-                    print(f"📤 发送: {' '.join(f'{b:02X}' for b in hex_bytes)}")
-                    
-                    # 发送命令
-                    send_iso_tp_message(bus, arb_id, expected_response_ids, hex_bytes, is_extend_id)
-                    
-                    # 接收响应
-                    response = receive_iso_tp_message(bus, arb_id, expected_response_ids)
-                    if response:
-                        print(f"📥 响应: {' '.join(f'{b:02X}' for b in response)}")
-                        
-                        # 特殊响应处理
-                        if len(response) >= 2 and response[0] == 0x7F:
-                            if len(response) >= 3:
-                                switch_NRC(response[2])
-                    else:
-                        print("❌ 无响应")
-                        
-                except ValueError:
-                    print("❌ 无效的十六进制格式")
-                except Exception as e:
-                    print(f"❌ 发送命令失败: {e}")
-                    
         except KeyboardInterrupt:
-            print("\n👋 收到中断信号，退出...")
+            print("\n👋 收到中断信号，返回主菜单...")
             break
         except EOFError:
-            print("\n👋 输入结束，退出...")
+            print("\n👋 输入结束，返回主菜单...")
             break
 
 def main():
     print_log_header()
     arb_id = get_arbitration_id()
+    response_ids = get_response_ids(arb_id)
     SID = UDS_SID()
     start_address = 0xC3F80000
     is_extend_id = arb_id > 0x7FF
-    expected_response_ids = {arb_id + 8, arb_id - 8, (arb_id & 0xFFFF0000) | ((arb_id & 0x0000FF00) >> 8) | ((arb_id & 0x000000FF) << 8)}
     
     use_fd = get_can_mode()
     
-    filters = [
-        {"can_id": arb_id+8, "can_mask": 0x7FF, "extended": False},
-        {"can_id": arb_id-8, "can_mask": 0x7FF, "extended": False},
-        {"can_id": (arb_id & 0xFFFF0000) | ((arb_id & 0x0000FF00) >> 8) | ((arb_id & 0x000000FF) << 8), "can_mask": 0x1FFFFFFF, "extended": True},
-        {"can_id": arb_id, "can_mask": 0x1FFFFFFF, "extended": True},
-    ]
+    filters = []
+    for resp_id in response_ids:
+        filters.append({
+            "can_id": resp_id,
+            "can_mask": 0x1FFFFFFF if resp_id > 0x7FF else 0x7FF,
+            "extended": resp_id > 0x7FF
+        })
+    
+    # 添加请求ID过滤器
+    filters.append({
+        "can_id": arb_id,
+        "can_mask": 0x1FFFFFFF if arb_id > 0x7FF else 0x7FF,
+        "extended": arb_id > 0x7FF
+    })
 
     try:
         if use_fd:
@@ -780,6 +916,7 @@ def main():
 
         print("\n📋 配置摘要:")
         print(f"  CAN ID: {hex(arb_id)}")
+        print(f"  响应ID: {[hex(id) for id in response_ids]}")
         print(f"  安全访问级别: {hex(level)}")
         print(f"  爆破模式: {seed_choice}")
         
@@ -788,9 +925,9 @@ def main():
                 print("🔄 请求种子 1000 次")
                 for i in range(1000):
                     print(f"📍 第 {i+1} 次请求")
-                    extended_session(bus, arb_id, expected_response_ids, is_extend_id)
+                    extended_session(bus, arb_id, response_ids, is_extend_id)
                     time.sleep(0.01)
-                    request_seed(bus, arb_id, expected_response_ids, level, is_extend_id, seed_choice)
+                    request_seed(bus, arb_id, response_ids, level, is_extend_id, seed_choice)
                     time.sleep(0.01)
                     
             elif seed_choice == 1:
@@ -798,15 +935,15 @@ def main():
                 success = False
                 for i in range(10):
                     print(f"📍 第 {i+1} 次尝试")
-                    extended_session(bus, arb_id, expected_response_ids, is_extend_id)
+                    extended_session(bus, arb_id, response_ids, is_extend_id)
                     time.sleep(0.1)
-                    seed = request_seed(bus, arb_id, expected_response_ids, level, is_extend_id, seed_choice)
+                    seed = request_seed(bus, arb_id, response_ids, level, is_extend_id, seed_choice)
                     time.sleep(0.1)
                     if seed is None:
                         print("⚠️ 未收到种子，跳过密钥尝试")
                         time.sleep(0.5)
                         continue
-                    result = send_key_random(bus, arb_id, seed, level, expected_response_ids, is_extend_id)
+                    result = send_key_random(bus, arb_id, seed, level, response_ids, is_extend_id)
                     if result is True:
                         print("🎉 安全访问成功!")
                         success = True
@@ -821,14 +958,14 @@ def main():
                 
             elif seed_choice == 2:
                 print("🔄 请求种子并使用取反算法")
-                extended_session(bus, arb_id, expected_response_ids, is_extend_id)
+                extended_session(bus, arb_id, response_ids, is_extend_id)
                 time.sleep(0.1)
-                seed = request_seed(bus, arb_id, expected_response_ids, level, is_extend_id, seed_choice)
-                process_seed(bus, arb_id, seed, level, expected_response_ids, is_extend_id, seed)
+                seed = request_seed(bus, arb_id, response_ids, level, is_extend_id, seed_choice)
+                process_seed(bus, arb_id, seed, level, response_ids, is_extend_id, seed)
                 
             elif seed_choice == 3:
                 print("🧠 请求种子并进行多算法爆破")
-                auto_seed_key_attack(bus, arb_id, expected_response_ids, level, is_extend_id)
+                auto_seed_key_attack(bus, arb_id, response_ids, level, is_extend_id)
                    
         except KeyboardInterrupt:
             bus.shutdown()
@@ -851,17 +988,17 @@ def main():
     elif SID == 0x22:
         print("🔍 执行 ReadDataByIdentifier (0x22) DID 扫描")
         mode = get_scan_mode()
-        extended_session(bus, arb_id, expected_response_ids, is_extend_id)
+        extended_session(bus, arb_id, response_ids, is_extend_id)
         time.sleep(0.01)
         start_did, end_did = get_did_scan_range()
         
         try:
             if mode == 0:
                 print("📊 模式0: 遍历DID并显示数据")
-                scan_all_dids_mode0(bus, arb_id, expected_response_ids, is_extend_id, start_did, end_did)
+                scan_all_dids_mode0(bus, arb_id, response_ids, is_extend_id, start_did, end_did)
             elif mode == 1:
                 print("📝 模式1: 发送写入DID请求并返回NRC")
-                test_write_did_mode1(bus, arb_id, expected_response_ids, is_extend_id, start_did, end_did)
+                test_write_did_mode1(bus, arb_id, response_ids, is_extend_id, start_did, end_did)
                 
         except KeyboardInterrupt:
             print("\n👋 用户中断操作...")
@@ -871,8 +1008,8 @@ def main():
     else:
         # 进入交互模式
         print("🎮 进入交互诊断模式")
-        extended_session(bus, arb_id, expected_response_ids, is_extend_id)
-        interactive_mode(bus, arb_id, expected_response_ids, is_extend_id)
+        extended_session(bus, arb_id, response_ids, is_extend_id)
+        interactive_mode(bus, arb_id, response_ids, is_extend_id)
         bus.shutdown()
 
 if __name__ == "__main__":
