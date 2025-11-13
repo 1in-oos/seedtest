@@ -728,7 +728,6 @@ def get_can_mode():
 
 def main():
     print_log_header()
-    
     arb_id = get_arbitration_id()
     SID = UDS_SID()
     start_address = 0xC3F80000

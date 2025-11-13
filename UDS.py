@@ -14,7 +14,6 @@ def Save_log(seed):
     with open(log_file + "_hex", "a") as f_hex:
         f_hex.write(hex_seed + '\n')
 
-
 def send_iso_tp_message(bus, arb_id, expected_response_ids, data, is_extend_id):
     """发送 ISO-TP 消息"""
     max_single_frame_size = 7  # ISO-TP 单帧数据的最大长度（不包括数据头）
